@@ -1,0 +1,356 @@
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum AssetType {
+  STOCK
+  MUTUAL_FUND
+  ETF
+}
+
+enum TransactionType {
+  BUY
+  SELL
+  DIVIDEND
+}
+
+model User {
+  id           String      @id @default(uuid())
+  name         String
+  email        String      @unique
+  passwordHash String      @map("password_hash")
+  createdAt    DateTime    @default(now()) @map("created_at")
+  updatedAt    DateTime    @updatedAt @map("updated_at")
+
+  portfolios   Portfolio[]
+  watchlist    Watchlist?
+
+  @@map("users")
+}
+
+model Portfolio {
+  id          String        @id @default(uuid())
+  userId      String        @map("user_id")
+  name        String        @default("Main Portfolio")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  holdings     Holding[]
+  transactions Transaction[]
+
+  @@map("portfolios")
+}
+
+model Holding {
+  id             String    @id @default(uuid())
+  portfolioId    String    @map("portfolio_id")
+  symbol         String
+  name           String
+  assetType      AssetType @default(STOCK) @map("asset_type")
+  quantity       Decimal   @db.Decimal(14, 4)
+  avgPrice       Decimal   @db.Decimal(14, 2) @map("avg_price")
+  investedAmount Decimal   @db.Decimal(14, 2) @map("invested_amount")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  portfolio      Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+
+  @@unique([portfolioId, symbol])
+  @@map("holdings")
+}
+
+model Transaction {
+  id          String          @id @default(uuid())
+  portfolioId String          @map("portfolio_id")
+  symbol      String
+  name        String
+  type        TransactionType
+  quantity    Decimal         @db.Decimal(14, 4)
+  price       Decimal         @db.Decimal(14, 2)
+  charges     Decimal         @default(0) @db.Decimal(10, 2)
+  executedAt  DateTime        @default(now()) @map("executed_at")
+  notes       String?
+
+  portfolio   Portfolio       @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+
+  @@map("transactions")
+}
+
+model Watchlist {
+  id        String          @id @default(uuid())
+  userId    String          @unique @map("user_id")
+  items     WatchlistItem[]
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("watchlists")
+}
+
+model WatchlistItem {
+  id          String    @id @default(uuid())
+  watchlistId String    @map("watchlist_id")
+  symbol      String
+  name        String
+  assetType   AssetType @default(STOCK) @map("asset_type")
+  addedAt     DateTime  @default(now()) @map("added_at")
+
+  watchlist   Watchlist @relation(fields: [watchlistId], references: [id], onDelete: Cascade)
+
+  @@unique([watchlistId, symbol])
+  @@map("watchlist_items")
+}
+
+model IPO {
+  id            String   @id @default(uuid())
+  symbol        String   @unique
+  name          String
+  segment       String   @default("mainboard") // 'mainboard' | 'sme'
+  status        String   @default("upcoming")  // 'upcoming' | 'open' | 'closed' | 'listed'
+  issuePrice    Decimal  @db.Decimal(10, 2) @map("issue_price")
+  lotSize       Int      @map("lot_size")
+  minInvestment Decimal  @default(0) @db.Decimal(12, 2) @map("min_investment")
+  openDate      String   @map("open_date")
+  closeDate     String   @map("close_date")
+  listingDate   String   @map("listing_date")
+  
+  // JSONB columns for nested / semi-structured data
+  priceRange    Json     @map("price_range")
+  issueSize     Json     @map("issue_size")
+  timeline      Json
+  gmpData       Json     @map("gmp_data")
+  subscription  Json
+  financials    Json
+  valuation     Json
+  listingDetails Json?   @map("listing_details")
+  about         String   @default("")
+  strengths     String[]
+  risks         String[]
+  verdict       Json?
+  objectsOfIssue String[] @map("objects_of_issue")
+  leadManagers  String[] @map("lead_managers")
+  registrar     Json
+
+  // Freshness & Sync Metadata
+  lastFetchedAt     DateTime? @map("last_fetched_at")
+  lastAttemptedAt   DateTime? @map("last_attempted_at")
+  nextRefreshAt     DateTime? @map("next_refresh_at")
+  lastRefreshStatus String?   @default("SUCCESS") @map("last_refresh_status")
+  lastRefreshError  String?   @map("last_refresh_error")
+  providerUpdatedAt DateTime? @map("provider_updated_at")
+
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@index([segment])
+  @@index([nextRefreshAt])
+  @@map("ipos")
+}
+
+model IPOSyncJob {
+  id                String    @id @default(uuid())
+  jobId             String    @unique @map("job_id")
+  trigger           String    // 'SCHEDULED' | 'ADMIN'
+  initiatedBy       String?   @map("initiated_by")
+  startedAt         DateTime  @map("started_at")
+  completedAt       DateTime? @map("completed_at")
+  status            String    @default("RUNNING") // 'RUNNING' | 'SUCCESS' | 'PARTIAL' | 'FAILED'
+  datasets          String[]  // ['open', 'closed', 'upcoming', 'listed']
+  requestsAttempted Int       @default(0) @map("requests_attempted")
+  requestsSuccess   Int       @default(0) @map("requests_success")
+  requestsFailed    Int       @default(0) @map("requests_failed")
+  recordsInserted   Int       @default(0) @map("records_inserted")
+  recordsUpdated    Int       @default(0) @map("records_updated")
+  recordsSkipped    Int       @default(0) @map("records_skipped")
+  errorSummary      String?   @map("error_summary")
+  metadata          Json?
+  createdAt         DateTime  @default(now()) @map("created_at")
+
+  @@index([startedAt(sort: Desc)])
+  @@index([status])
+  @@index([trigger])
+  @@map("ipo_sync_jobs")
+}
+
+model IPODatasetSync {
+  dataset         String    @id // 'open' | 'closed' | 'upcoming' | 'listed'
+  lastFetchedAt   DateTime? @map("last_fetched_at")
+  lastAttemptedAt DateTime? @map("last_attempted_at")
+  lastStatus      String    @default("IDLE") @map("last_status") // 'IDLE' | 'SUCCESS' | 'FAILED'
+  lastError       String?   @map("last_error")
+  recordCount     Int       @default(0) @map("record_count")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@map("ipo_dataset_syncs")
+}
+
+model MutualFund {
+  id                    String   @id @default(uuid())
+  schemeCode            Int      @unique @map("scheme_code")
+  name                  String
+  schemeName            String   @map("scheme_name")
+  fundHouse             String   @map("fund_house")
+  category              String   // 'Equity', 'Debt', 'Hybrid', 'Index', 'Solution Oriented'
+  subCategory           String   @map("sub_category") // 'Small Cap', 'Mid Cap', 'Large Cap', 'Flexi Cap', 'ELSS', etc.
+  planType              String   @default("Direct") @map("plan_type")
+  optionType            String   @default("Growth") @map("option_type")
+  
+  // Real NAV & Performance Metrics
+  currentNav            Decimal  @db.Decimal(10, 4) @map("current_nav")
+  navDate               String   @map("nav_date")
+  dayChange             Decimal  @default(0) @db.Decimal(10, 4) @map("day_change")
+  dayChangePct          Decimal  @default(0) @db.Decimal(6, 2) @map("day_change_pct")
+  returns1Y             Decimal? @db.Decimal(6, 2) @map("returns_1y")
+  returns3Y             Decimal? @db.Decimal(6, 2) @map("returns_3y")
+  returns5Y             Decimal? @db.Decimal(6, 2) @map("returns_5y")
+  returnsSinceInception Decimal? @db.Decimal(6, 2) @map("returns_since_inception")
+  
+  // Key Info
+  benchmark             String   @default("NIFTY 50 TRI")
+  aum                   Decimal? @db.Decimal(14, 2) // in Crores
+  expenseRatio          Decimal? @db.Decimal(5, 2) @map("expense_ratio")
+  riskRating            Int      @default(4) @map("risk_rating") // 1 to 5 Stars
+  riskometer            String   @default("Very High")
+  minSip                Decimal  @default(500) @db.Decimal(10, 2) @map("min_sip")
+  minLumpsum            Decimal  @default(1000) @db.Decimal(10, 2) @map("min_lumpsum")
+  exitLoad              String   @default("Nil") @map("exit_load")
+  lockInPeriod          String?  @map("lock_in_period")
+  turnoverRatio         Decimal? @db.Decimal(6, 2) @map("turnover_ratio")
+  tags                  String[] @default([])
+  
+  // JSONB for Real Holdings, Sectors, Managers, and Ratios
+  holdings              Json     @default("[]")
+  sectorAlloc           Json     @default("[]") @map("sector_alloc")
+  assetAlloc            Json     @default("{}") @map("asset_alloc")
+  riskMetrics           Json     @default("{}") @map("risk_metrics")
+  fundManagers          Json     @default("[]") @map("fund_managers")
+  peers                 Json     @default("[]")
+  
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  @@index([category, subCategory])
+  @@index([fundHouse])
+  @@index([schemeCode])
+  @@map("mutual_funds")
+}
+
+model Stock {
+  id                String    @id @default(uuid())
+  symbol            String    @unique
+  name              String
+  sector            String
+  industry          String?
+  isin              String?
+  marketCapCategory String    @default("Large") @map("market_cap_category") // 'Large' | 'Mid' | 'Small' | 'Micro'
+  marketCap         Decimal?  @db.Decimal(18, 2) @map("market_cap") // in Crores
+  price             Decimal   @db.Decimal(12, 2)
+  dayChange         Decimal   @default(0) @db.Decimal(10, 2) @map("day_change")
+  dayChangePercent  Decimal   @default(0) @db.Decimal(8, 2) @map("day_change_percent")
+  volume            Decimal?  @db.Decimal(18, 0)
+  high52w           Decimal?  @db.Decimal(12, 2) @map("high_52w")
+  low52w            Decimal?  @db.Decimal(12, 2) @map("low_52w")
+  high52wPercent    Decimal?  @db.Decimal(8, 2) @map("high_52w_percent") // % from 52w high
+
+  // Valuation
+  peRatio           Decimal?  @db.Decimal(10, 2) @map("pe_ratio")
+  sectorPe          Decimal?  @db.Decimal(10, 2) @map("sector_pe")
+  pbRatio           Decimal?  @db.Decimal(10, 2) @map("pb_ratio")
+  evEbitda          Decimal?  @db.Decimal(10, 2) @map("ev_ebitda")
+  pegRatio          Decimal?  @db.Decimal(10, 2) @map("peg_ratio")
+  dividendYield     Decimal?  @db.Decimal(8, 2) @map("dividend_yield")
+  bookValue         Decimal?  @db.Decimal(12, 2) @map("book_value")
+  eps               Decimal?  @db.Decimal(12, 2)
+
+  // Profitability & Quality
+  roe               Decimal?  @db.Decimal(8, 2)
+  roce              Decimal?  @db.Decimal(8, 2)
+  opm               Decimal?  @db.Decimal(8, 2) // Operating Profit Margin %
+  npm               Decimal?  @db.Decimal(8, 2) // Net Profit Margin %
+
+  // Solvency & Financial Health
+  debtToEquity      Decimal?  @db.Decimal(8, 2) @map("debt_to_equity")
+  interestCoverage  Decimal?  @db.Decimal(8, 2) @map("interest_coverage")
+  currentRatio      Decimal?  @db.Decimal(8, 2) @map("current_ratio")
+
+  // Growth (3Y / 5Y)
+  revenueGrowth3y   Decimal?  @db.Decimal(8, 2) @map("revenue_growth_3y")
+  profitGrowth3y    Decimal?  @db.Decimal(8, 2) @map("profit_growth_3y")
+  revenueGrowth5y   Decimal?  @db.Decimal(8, 2) @map("revenue_growth_5y")
+  profitGrowth5y    Decimal?  @db.Decimal(8, 2) @map("profit_growth_5y")
+
+  // Technicals & Momentum
+  rsi               Decimal?  @db.Decimal(8, 2)
+  above50dma        Boolean?  @default(false) @map("above_50dma")
+  above200dma       Boolean?  @default(false) @map("above_200dma")
+  sma50             Decimal?  @db.Decimal(12, 2) @map("sma_50")
+  sma200            Decimal?  @db.Decimal(12, 2) @map("sma_200")
+  oneWeekReturn     Decimal?  @db.Decimal(8, 2) @map("one_week_return")
+  oneMonthReturn    Decimal?  @db.Decimal(8, 2) @map("one_month_return")
+  oneYearReturn     Decimal?  @db.Decimal(8, 2) @map("one_year_return")
+  threeYearReturn   Decimal?  @db.Decimal(8, 2) @map("three_year_return")
+  beta              Decimal?  @db.Decimal(8, 2)
+
+  // Ownership
+  promoterHolding   Decimal?  @db.Decimal(8, 2) @map("promoter_holding")
+  promoterPledge    Decimal?  @db.Decimal(8, 2) @map("promoter_pledge")
+  fiiHolding        Decimal?  @db.Decimal(8, 2) @map("fii_holding")
+  diiHolding        Decimal?  @db.Decimal(8, 2) @map("dii_holding")
+  publicHolding     Decimal?  @db.Decimal(8, 2) @map("public_holding")
+
+  // Extended Data
+  rawTechnical      Json?     @default("[]") @map("raw_technical")
+  rawFinancials     Json?     @default("{}") @map("raw_financials")
+  rawMetrics        Json?     @default("{}") @map("raw_metrics")
+  recentNews        Json?     @default("[]") @map("recent_news")
+  analystRating     String?   @default("Hold") @map("analyst_rating")
+  sparkline         Json?     @default("[]")
+
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  @@index([symbol])
+  @@index([sector])
+  @@index([marketCapCategory])
+  @@index([marketCap])
+  @@index([peRatio])
+  @@index([roe])
+  @@index([roce])
+  @@index([debtToEquity])
+  @@index([dividendYield])
+  @@index([rsi])
+  @@index([oneYearReturn])
+  @@map("stocks")
+}
+
+model MarketNews {
+  id             String    @id @default(uuid())
+  title          String
+  summary        String    @db.Text
+  url            String    @unique
+  source         String
+  imageUrl       String?   @map("image_url")
+  publishedAt    DateTime  @map("published_at")
+  category       String    // 'Stocks & Earnings' | 'Economy & Macro' | 'IPO Hub' | 'Mutual Funds' | 'Commodities & FX'
+  sector         String    @default("Diversified") // 'Banking & Finance' | 'IT & Tech' | 'Automobile' | 'Pharma & Healthcare' | 'Energy & Power' | 'Consumer & FMCG' | 'Metals & Mining' | 'Infrastructure & Realty' | 'Diversified'
+  relatedSymbols String[]  @default([]) @map("related_symbols") // ['RELIANCE', 'TCS']
+  sentiment      String    @default("NEUTRAL") // 'BULLISH' | 'BEARISH' | 'NEUTRAL'
+  impact         String    @default("NORMAL")  // 'HIGH' | 'NORMAL'
+  isBreaking     Boolean   @default(false)     @map("is_breaking")
+  createdAt      DateTime  @default(now())        @map("created_at")
+
+  @@index([publishedAt(sort: Desc)])
+  @@index([category])
+  @@index([sector])
+  @@index([sentiment])
+  @@map("market_news")
+}

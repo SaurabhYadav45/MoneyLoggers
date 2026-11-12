@@ -1,0 +1,59 @@
+name: MoneyLogger CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  backend-checks:
+    name: Backend Build & Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install Dependencies
+        run: npm --prefix backend ci
+
+      - name: Generate Prisma Client
+        run: npx --prefix backend prisma generate
+
+      - name: Compile Backend TypeScript
+        run: npm --prefix backend run build
+
+      - name: Run Backend Test Suite
+        run: npm --prefix backend test
+        env:
+          NODE_ENV: test
+
+  frontend-checks:
+    name: Frontend Lint & Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Dependencies
+        run: npm --prefix frontend ci
+
+      - name: Run ESLint
+        run: npm --prefix frontend run lint
+
+      - name: Build Frontend Application
+        run: npm --prefix frontend run build
